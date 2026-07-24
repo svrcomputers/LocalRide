@@ -1,5 +1,5 @@
 """
-Hyper Local Ride Booking Application - FIXED VERSION
+Hyper Local Ride Booking Application - COMPLETE FIX
 """
 
 import streamlit as st
@@ -16,7 +16,7 @@ import plotly.express as px
 # ==================== DATABASE SETUP ====================
 
 def init_db():
-    """Initialize SQLite database"""
+    """Initialize database and create users"""
     try:
         conn = sqlite3.connect('hyperlocal.db')
         c = conn.cursor()
@@ -105,6 +105,7 @@ def init_db():
         )''')
         
         conn.commit()
+        print("✅ Tables created!")
         
         # ===== FORCE CREATE USERS =====
         admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
@@ -143,12 +144,13 @@ def init_db():
         
         # Verify
         c.execute("SELECT id, username, user_type, status FROM users")
-        print("✅ Users created:", c.fetchall())
+        users = c.fetchall()
+        print("✅ Users created:", users)
         
         conn.close()
         return True
     except Exception as e:
-        print(f"Database error: {e}")
+        print(f"❌ Database error: {e}")
         return False
 
 # ==================== AUTHENTICATION ====================
@@ -166,8 +168,29 @@ def authenticate_user(username, password):
         conn.close()
         return user
     except Exception as e:
-        print(f"Auth error: {e}")
+        print(f"❌ Auth error: {e}")
         return None
+
+def register_user(username, password, full_name, phone, email, user_type):
+    try:
+        conn = sqlite3.connect('hyperlocal.db')
+        c = conn.cursor()
+        hashed = hash_password(password)
+        c.execute("INSERT INTO users (username, password, full_name, phone, email, user_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (username, hashed, full_name, phone, email, user_type, 'pending' if user_type == 'driver' else 'approved'))
+        user_id = c.lastrowid
+        
+        if user_type == 'driver':
+            c.execute("INSERT INTO drivers (user_id, vehicle_type, vehicle_number, license_number) VALUES (?, ?, ?, ?)",
+                     (user_id, 'bike', 'TN01AB1234', 'DL1234567890'))
+        
+        conn.commit()
+        conn.close()
+        return True, user_id
+    except sqlite3.IntegrityError:
+        return False, "Username already exists"
+    except Exception as e:
+        return False, str(e)
 
 # ==================== UI ====================
 
@@ -555,7 +578,7 @@ def login_page():
                     else:
                         st.error(f"❌ User type mismatch. User is '{user[5]}', you selected '{user_type}'")
                 else:
-                    st.error("❌ Invalid credentials")
+                    st.error("❌ Invalid username or password")
 
 def register_page():
     st.markdown("<div class='header-gradient'><h1>📝 Register</h1></div>", unsafe_allow_html=True)
@@ -587,7 +610,10 @@ def register_page():
 
 def main():
     # Initialize database
-    init_db()
+    success = init_db()
+    if not success:
+        st.error("❌ Database initialization failed. Check logs.")
+        return
     
     # Set page config
     set_page_config()

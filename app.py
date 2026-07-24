@@ -148,24 +148,36 @@ def init_db():
         FOREIGN KEY (reviewee_id) REFERENCES users (id)
     )''')
     
-    # Admin user - Force create with proper credentials
+    # ===== FIX: FORCE CREATE ADMIN WITH PROPER CREDENTIALS =====
     admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
     
-    # Check if admin exists
-    c.execute("SELECT * FROM users WHERE username = 'admin'")
+    # Delete any existing admin
+    c.execute("DELETE FROM users WHERE username = 'admin'")
+    
+    # Create fresh admin
+    c.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
+                 VALUES (?, ?, ?, ?, ?, ?)""",
+              ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
+    
+    # Also add a test customer for demonstration
+    c.execute("SELECT * FROM users WHERE username = 'customer'")
     if not c.fetchone():
+        customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
         c.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
                      VALUES (?, ?, ?, ?, ?, ?)""",
-                  ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
-    else:
-        # Update admin password if exists
-        c.execute("""UPDATE users SET password = ?, status = 'approved' WHERE username = 'admin'""", 
-                  (admin_pass,))
+                  ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
     
-    # Also ensure admin is approved
-    c.execute("""UPDATE users SET status = 'approved' WHERE username = 'admin'""")
-    
+    # Commit all changes
     conn.commit()
+    
+    # Verify admin was created
+    c.execute("SELECT * FROM users WHERE username = 'admin'")
+    admin = c.fetchone()
+    if admin:
+        print("✅ Admin created successfully!")
+    else:
+        print("❌ Admin creation failed!")
+    
     conn.close()
 
 # ==================== AUTHENTICATION ====================
@@ -296,16 +308,6 @@ def set_page_config():
             border-radius: 15px;
             color: white;
             margin-bottom: 30px;
-        }
-        .notification-badge {
-            background: #ff4444;
-            color: white;
-            border-radius: 50%;
-            padding: 2px 8px;
-            font-size: 12px;
-            position: absolute;
-            top: -8px;
-            right: -8px;
         }
         .login-container {
             max-width: 400px;
@@ -1087,24 +1089,33 @@ def login_page():
         with st.container():
             st.markdown('<div class="login-container">', unsafe_allow_html=True)
             st.markdown("### Welcome Back!")
+            
+            # Display test credentials
+            st.info("📝 **Test Credentials:**\n- Admin: `admin` / `admin123`\n- Customer: `customer` / `customer123`")
+            
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
             user_type = st.selectbox("Login as", ["customer", "driver", "admin"])
             
             if st.button("Login", use_container_width=True):
-                user = authenticate_user(username, password)
-                if user and user[5] == user_type:
-                    # Check if user is approved
-                    if user[6] == 'approved':
-                        st.session_state.user = user
-                        st.success("✅ Login successful!")
-                        time.sleep(0.5)
-                        st.session_state.page = "Dashboard"
-                        st.rerun()
-                    else:
-                        st.error("❌ Your account is pending approval. Please wait for admin approval.")
+                if not username or not password:
+                    st.error("❌ Please enter both username and password")
                 else:
-                    st.error("❌ Invalid credentials or user type mismatch")
+                    user = authenticate_user(username, password)
+                    if user:
+                        if user[5] == user_type:
+                            if user[6] == 'approved':
+                                st.session_state.user = user
+                                st.success("✅ Login successful!")
+                                time.sleep(0.5)
+                                st.session_state.page = "Dashboard"
+                                st.rerun()
+                            else:
+                                st.error("❌ Your account is pending approval. Please wait for admin approval.")
+                        else:
+                            st.error("❌ User type mismatch. Please select the correct role.")
+                    else:
+                        st.error("❌ Invalid username or password")
             
             st.markdown("---")
             st.markdown("Don't have an account? [Register Here](#)")
@@ -1133,6 +1144,8 @@ def register_page():
                     st.error("❌ Passwords do not match")
                 elif not all([full_name, username, phone, email, password]):
                     st.error("❌ Please fill all fields")
+                elif len(password) < 6:
+                    st.error("❌ Password must be at least 6 characters")
                 else:
                     success, result = register_user(username, password, full_name, phone, email, user_type)
                     if success:

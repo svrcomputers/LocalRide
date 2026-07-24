@@ -1,5 +1,6 @@
 """
-HyperLocal Ride Booking - WORKING VERSION
+HyperLocal Ride Booking - FINAL WORKING VERSION
+Uses Streamlit Secrets for authentication
 """
 
 import streamlit as st
@@ -7,16 +8,14 @@ import sqlite3
 import hashlib
 import random
 import pandas as pd
-import os
 
-# ==================== DATABASE SETUP ====================
+# ==================== DATABASE ====================
 
 def init_db():
-    """Initialize database and create users"""
+    """Initialize database"""
     conn = sqlite3.connect('hyperlocal.db')
     c = conn.cursor()
-
-    # Create tables
+    
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
@@ -26,7 +25,7 @@ def init_db():
         user_type TEXT NOT NULL,
         status TEXT DEFAULT 'approved'
     )''')
-
+    
     c.execute('''CREATE TABLE IF NOT EXISTS bookings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         customer_id INTEGER NOT NULL,
@@ -36,36 +35,32 @@ def init_db():
         status TEXT DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-
-    # CHECK IF USERS EXIST
+    
+    # Check if users exist
     c.execute("SELECT COUNT(*) FROM users")
     count = c.fetchone()[0]
-
+    
     if count == 0:
-        print("⚠️ No users found. Creating users...")
-
-        # Create users
-        admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
+        # Create users from secrets or defaults
+        try:
+            admin_user = st.secrets["admin"]["username"]
+            admin_pass = st.secrets["admin"]["password"]
+        except:
+            admin_user = "admin"
+            admin_pass = "admin123"
+        
+        hashed = hashlib.sha256(admin_pass.encode()).hexdigest()
         c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
-                  ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
-
+                  (admin_user, hashed, 'System Admin', '9999999999', 'admin', 'approved'))
+        
+        # Also create customer
         customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
         c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
                   ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
-
-        driver_pass = hashlib.sha256('driver123'.encode()).hexdigest()
-        c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
-                  ('driver', driver_pass, 'Test Driver', '8765432109', 'driver', 'approved'))
-
+        
         conn.commit()
-        print("✅ Users created successfully!")
-
-        # Verify
-        c.execute("SELECT username, user_type FROM users")
-        print("✅ Users in database:", c.fetchall())
-    else:
-        print(f"✅ Users already exist ({count} users)")
-
+        print(f"✅ Admin '{admin_user}' created!")
+    
     conn.close()
 
 # ==================== AUTHENTICATION ====================
@@ -81,12 +76,35 @@ def authenticate_user(username, password):
         c.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, hashed))
         user = c.fetchone()
         conn.close()
+        
+        # If not found in DB, check secrets
+        if user is None:
+            try:
+                if username == st.secrets["admin"]["username"] and password == st.secrets["admin"]["password"]:
+                    # Create user in DB
+                    conn = sqlite3.connect('hyperlocal.db')
+                    c = conn.cursor()
+                    hashed = hash_password(password)
+                    c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
+                              (username, hashed, 'System Admin', '9999999999', 'admin', 'approved'))
+                    conn.commit()
+                    conn.close()
+                    
+                    # Return the user
+                    conn = sqlite3.connect('hyperlocal.db')
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM users WHERE username = ?", (username,))
+                    user = c.fetchone()
+                    conn.close()
+            except:
+                pass
+        
         return user
     except Exception as e:
         print(f"Auth error: {e}")
         return None
 
-# ==================== PAGE CONFIG ====================
+# ==================== UI ====================
 
 st.set_page_config(page_title="HyperLocal", page_icon="🚗", layout="wide")
 
@@ -256,18 +274,22 @@ def login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        st.markdown("""
+        try:
+            admin_user = st.secrets["admin"]["username"]
+        except:
+            admin_user = "admin"
+        
+        st.markdown(f"""
         <div class='credentials-box'>
             <strong>📝 Test Credentials:</strong><br>
-            👑 Admin: <code>admin</code> / <code>admin123</code><br>
-            👤 Customer: <code>customer</code> / <code>customer123</code><br>
-            🚗 Driver: <code>driver</code> / <code>driver123</code>
+            👑 Admin: <code>{admin_user}</code> / <code>admin123</code><br>
+            👤 Customer: <code>customer</code> / <code>customer123</code>
         </div>
         """, unsafe_allow_html=True)
 
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
-        user_type = st.selectbox("Login as", ["admin", "customer", "driver"])
+        user_type = st.selectbox("Login as", ["admin", "customer"])
 
         if st.button("Login", use_container_width=True):
             if not username or not password:

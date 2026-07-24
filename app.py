@@ -1,6 +1,5 @@
 """
-HyperLocal Ride Booking Application
-Complete working version for Streamlit Cloud
+HyperLocal Ride Booking - WORKING VERSION
 """
 
 import streamlit as st
@@ -8,16 +7,16 @@ import sqlite3
 import hashlib
 import random
 import pandas as pd
-from datetime import datetime
+import os
 
-# ==================== DATABASE ====================
+# ==================== DATABASE SETUP ====================
 
 def init_db():
-    """Initialize database and ALWAYS create users"""
+    """Initialize database and create users"""
     conn = sqlite3.connect('hyperlocal.db')
     c = conn.cursor()
 
-    # Users table
+    # Create tables
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
@@ -28,7 +27,6 @@ def init_db():
         status TEXT DEFAULT 'approved'
     )''')
 
-    # Bookings table
     c.execute('''CREATE TABLE IF NOT EXISTS bookings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         customer_id INTEGER NOT NULL,
@@ -39,37 +37,43 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # Delete all existing users to start fresh
-    c.execute("DELETE FROM users")
+    # CHECK IF USERS EXIST
+    c.execute("SELECT COUNT(*) FROM users")
+    count = c.fetchone()[0]
 
-    # Create Admin
-    admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
-    c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
-              ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
+    if count == 0:
+        print("⚠️ No users found. Creating users...")
 
-    # Create Customer
-    customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
-    c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
-              ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
+        # Create users
+        admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
+                  ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
 
-    # Create Driver
-    driver_pass = hashlib.sha256('driver123'.encode()).hexdigest()
-    c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
-              ('driver', driver_pass, 'Test Driver', '8765432109', 'driver', 'approved'))
+        customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
+                  ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
 
-    conn.commit()
+        driver_pass = hashlib.sha256('driver123'.encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
+                  ('driver', driver_pass, 'Test Driver', '8765432109', 'driver', 'approved'))
+
+        conn.commit()
+        print("✅ Users created successfully!")
+
+        # Verify
+        c.execute("SELECT username, user_type FROM users")
+        print("✅ Users in database:", c.fetchall())
+    else:
+        print(f"✅ Users already exist ({count} users)")
+
     conn.close()
-    print("✅ Users created: admin, customer, driver")
-
 
 # ==================== AUTHENTICATION ====================
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-
 def authenticate_user(username, password):
-    """Check if user exists and password matches"""
     try:
         conn = sqlite3.connect('hyperlocal.db')
         c = conn.cursor()
@@ -78,18 +82,14 @@ def authenticate_user(username, password):
         user = c.fetchone()
         conn.close()
         return user
-    except:
+    except Exception as e:
+        print(f"Auth error: {e}")
         return None
 
 # ==================== PAGE CONFIG ====================
 
-st.set_page_config(
-    page_title="HyperLocal Ride Booking",
-    page_icon="🚗",
-    layout="wide"
-)
+st.set_page_config(page_title="HyperLocal", page_icon="🚗", layout="wide")
 
-# Custom CSS
 st.markdown("""
 <style>
     .stButton > button {
@@ -101,17 +101,7 @@ st.markdown("""
         font-weight: 600;
         width: 100%;
     }
-    .stButton > button:hover {
-        background-color: #1557b0;
-    }
-    .card {
-        background: white;
-        padding: 20px;
-        border-radius: 15px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        margin: 10px 0;
-        border-left: 4px solid #1a73e8;
-    }
+    .stButton > button:hover { background-color: #1557b0; }
     .header-gradient {
         background: linear-gradient(135deg, #1a73e8, #0d47a1);
         padding: 20px;
@@ -132,6 +122,14 @@ st.markdown("""
         border-radius: 15px;
         color: white;
         text-align: center;
+    }
+    .card {
+        background: white;
+        padding: 20px;
+        border-radius: 15px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        margin: 10px 0;
+        border-left: 4px solid #1a73e8;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -165,12 +163,11 @@ def show_sidebar():
                         del st.session_state[key]
                 st.rerun()
         else:
-            st.markdown("### Welcome!")
             if st.button("🔑 Login"):
                 st.session_state.page = "Login"
                 st.rerun()
 
-# ==================== ADMIN FUNCTIONS ====================
+# ==================== ADMIN ====================
 
 def admin_dashboard():
     st.markdown("<div class='header-gradient'><h1>📊 Admin Dashboard</h1></div>", unsafe_allow_html=True)
@@ -189,15 +186,7 @@ def admin_dashboard():
     st.subheader("👥 All Users")
     st.dataframe(users)
 
-
-def admin_users():
-    st.header("👥 User Management")
-    conn = sqlite3.connect('hyperlocal.db')
-    users = pd.read_sql("SELECT * FROM users", conn)
-    conn.close()
-    st.dataframe(users)
-
-# ==================== CUSTOMER FUNCTIONS ====================
+# ==================== CUSTOMER ====================
 
 def customer_dashboard():
     st.markdown("<div class='header-gradient'><h1>🏠 Customer Dashboard</h1></div>", unsafe_allow_html=True)
@@ -219,7 +208,6 @@ def customer_dashboard():
     else:
         st.info("No bookings yet")
 
-
 def book_ride():
     st.markdown("<div class='header-gradient'><h1>🚗 Book a Ride</h1></div>", unsafe_allow_html=True)
 
@@ -227,7 +215,6 @@ def book_ride():
     pickup = st.text_input("Pickup Location", "Your Location")
     dropoff = st.text_input("Dropoff Location", "Destination")
 
-    # Calculate fare
     distance = random.uniform(2, 15)
     base_fares = {"Bike": 20, "Auto": 35, "Cab": 60}
     fare = base_fares[service_type] + (distance * 8)
@@ -243,15 +230,12 @@ def book_ride():
     if st.button("🚗 Book Now", use_container_width=True):
         conn = sqlite3.connect('hyperlocal.db')
         c = conn.cursor()
-        c.execute("""
-            INSERT INTO bookings (customer_id, service_type, pickup_location, fare)
-            VALUES (?, ?, ?, ?)
-        """, (st.session_state.user[0], service_type, pickup, fare))
+        c.execute("INSERT INTO bookings (customer_id, service_type, pickup_location, fare) VALUES (?, ?, ?, ?)",
+                 (st.session_state.user[0], service_type, pickup, fare))
         booking_id = c.lastrowid
         conn.commit()
         conn.close()
-        st.success(f"✅ Ride booked successfully! Booking ID: #{booking_id}")
-
+        st.success(f"✅ Ride booked! Booking ID: #{booking_id}")
 
 def my_bookings():
     st.header("📋 My Bookings")
@@ -264,7 +248,7 @@ def my_bookings():
     else:
         st.info("No bookings found")
 
-# ==================== LOGIN PAGE ====================
+# ==================== LOGIN ====================
 
 def login_page():
     st.markdown("<div class='header-gradient'><h1>🔑 Login</h1></div>", unsafe_allow_html=True)
@@ -287,7 +271,7 @@ def login_page():
 
         if st.button("Login", use_container_width=True):
             if not username or not password:
-                st.error("❌ Please enter both username and password")
+                st.error("❌ Please enter both")
                 return
 
             user = authenticate_user(username, password)
@@ -304,7 +288,7 @@ def login_page():
             else:
                 st.error(f"❌ User type mismatch. User is '{user[5]}', you selected '{user_type}'")
 
-# ==================== MAIN APP ====================
+# ==================== MAIN ====================
 
 def main():
     # Initialize database
@@ -317,19 +301,17 @@ def main():
     # Sidebar
     show_sidebar()
 
-    # Check if user is logged in
+    # Check login
     if 'user' not in st.session_state:
         login_page()
         return
 
-    # Routing
+    # Route
     user_type = st.session_state.user[5]
 
     if user_type == 'admin':
         if st.session_state.page == "Dashboard":
             admin_dashboard()
-        elif st.session_state.page == "Users":
-            admin_users()
         else:
             admin_dashboard()
 
@@ -343,13 +325,9 @@ def main():
         else:
             customer_dashboard()
 
-    else:  # driver
+    else:
         st.markdown("<div class='header-gradient'><h1>🚗 Driver Dashboard</h1></div>", unsafe_allow_html=True)
         st.info("Driver features coming soon!")
-
-    # Footer
-    st.markdown("---")
-    st.markdown("<div style='text-align: center; color: #888;'>HyperLocal Ride Booking © 2025</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

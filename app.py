@@ -148,43 +148,81 @@ def init_db():
         FOREIGN KEY (reviewee_id) REFERENCES users (id)
     )''')
     
-    # ===== FORCE ADMIN AND CUSTOMER CREATION =====
+    # Commit table creation
+    conn.commit()
+    conn.close()
+    
+    # ===== FORCE ADMIN AND CUSTOMER CREATION USING SECRETS =====
     conn2 = sqlite3.connect('hyperlocal.db')
     c2 = conn2.cursor()
     
+    # Get admin credentials from secrets or use defaults
+    try:
+        admin_username = st.secrets["admin"]["username"]
+        admin_password = st.secrets["admin"]["password"]
+    except:
+        admin_username = "admin"
+        admin_password = "admin123"
+        print("⚠️ Using default admin credentials (secrets not found)")
+    
+    try:
+        customer_username = st.secrets["customer"]["username"]
+        customer_password = st.secrets["customer"]["password"]
+    except:
+        customer_username = "customer"
+        customer_password = "customer123"
+        print("⚠️ Using default customer credentials (secrets not found)")
+    
     # Delete existing admin and customer
-    c2.execute("DELETE FROM users WHERE username = 'admin'")
-    c2.execute("DELETE FROM users WHERE username = 'customer'")
+    c2.execute("DELETE FROM users WHERE username = ?", (admin_username,))
+    c2.execute("DELETE FROM users WHERE username = ?", (customer_username,))
     
     # Create admin
-    admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
+    admin_pass = hashlib.sha256(admin_password.encode()).hexdigest()
     c2.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
                  VALUES (?, ?, ?, ?, ?, ?)""",
-              ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
+              (admin_username, admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
     
     # Create test customer
-    customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
+    customer_pass = hashlib.sha256(customer_password.encode()).hexdigest()
     c2.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
                  VALUES (?, ?, ?, ?, ?, ?)""",
-              ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
+              (customer_username, customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
+    
+    # Create a test driver
+    c2.execute("DELETE FROM users WHERE username = 'driver'")
+    driver_pass = hashlib.sha256('driver123'.encode()).hexdigest()
+    c2.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
+                 VALUES (?, ?, ?, ?, ?, ?)""",
+              ('driver', driver_pass, 'Test Driver', '8765432109', 'driver', 'approved'))
+    
+    # Get driver user_id and create driver profile
+    c2.execute("SELECT id FROM users WHERE username = 'driver'")
+    driver_user = c2.fetchone()
+    if driver_user:
+        driver_id = driver_user[0]
+        c2.execute("DELETE FROM drivers WHERE user_id = ?", (driver_id,))
+        c2.execute("""INSERT INTO drivers (user_id, vehicle_type, vehicle_number, license_number, is_available) 
+                     VALUES (?, ?, ?, ?, ?)""",
+                  (driver_id, 'bike', 'TN01AB1234', 'DL1234567890', 1))
     
     # Commit and verify
     conn2.commit()
     
-    c2.execute("SELECT * FROM users WHERE username = 'admin'")
+    # Verify admin was created
+    c2.execute("SELECT * FROM users WHERE username = ?", (admin_username,))
     if c2.fetchone():
-        print("✅ Admin created successfully!")
+        print(f"✅ Admin '{admin_username}' created successfully!")
     else:
         print("❌ Admin creation failed!")
     
-    c2.execute("SELECT * FROM users WHERE username = 'customer'")
+    c2.execute("SELECT * FROM users WHERE username = ?", (customer_username,))
     if c2.fetchone():
-        print("✅ Customer created successfully!")
+        print(f"✅ Customer '{customer_username}' created successfully!")
     else:
         print("❌ Customer creation failed!")
     
     conn2.close()
-    conn.close()
 
 # ==================== AUTHENTICATION ====================
 
@@ -1106,12 +1144,24 @@ def login_page():
             st.markdown('<div class="login-container">', unsafe_allow_html=True)
             st.markdown("### Welcome Back!")
             
-            # Display test credentials
-            st.markdown("""
+            # Display test credentials from secrets or defaults
+            try:
+                admin_username = st.secrets["admin"]["username"]
+                admin_password = st.secrets["admin"]["password"]
+                customer_username = st.secrets["customer"]["username"]
+                customer_password = st.secrets["customer"]["password"]
+            except:
+                admin_username = "admin"
+                admin_password = "admin123"
+                customer_username = "customer"
+                customer_password = "customer123"
+            
+            st.markdown(f"""
             <div class='credentials-box'>
                 <strong>📝 Test Credentials:</strong><br>
-                👑 Admin: <code>admin</code> / <code>admin123</code><br>
-                👤 Customer: <code>customer</code> / <code>customer123</code>
+                👑 Admin: <code>{admin_username}</code> / <code>{admin_password}</code><br>
+                👤 Customer: <code>{customer_username}</code> / <code>{customer_password}</code><br>
+                🚗 Driver: <code>driver</code> / <code>driver123</code>
             </div>
             """, unsafe_allow_html=True)
             
@@ -1180,7 +1230,7 @@ def register_page():
 
 def main():
     """Main application entry point"""
-    # Initialize database
+    # Initialize database (this will create admin/customer/driver)
     init_db()
     
     # Set page config and styles

@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 from PIL import Image
 import io
 import base64
+import os
 
 # ==================== DATABASE SETUP ====================
 
@@ -147,14 +148,36 @@ def init_db():
         FOREIGN KEY (reviewee_id) REFERENCES users (id)
     )''')
     
-    # Admin user (default)
-    c.execute("SELECT * FROM users WHERE username = 'admin'")
-    if not c.fetchone():
-        admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
-        c.execute("INSERT INTO users (username, password, full_name, phone, user_type, status) VALUES (?, ?, ?, ?, ?, ?)",
-                 ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
+    # ===== FIX: FORCE CREATE ADMIN WITH PROPER CREDENTIALS =====
+    admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
     
+    # Delete any existing admin
+    c.execute("DELETE FROM users WHERE username = 'admin'")
+    
+    # Create fresh admin
+    c.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
+                 VALUES (?, ?, ?, ?, ?, ?)""",
+              ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
+    
+    # Also add a test customer for demonstration
+    c.execute("SELECT * FROM users WHERE username = 'customer'")
+    if not c.fetchone():
+        customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
+        c.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
+    
+    # Commit all changes
     conn.commit()
+    
+    # Verify admin was created
+    c.execute("SELECT * FROM users WHERE username = 'admin'")
+    admin = c.fetchone()
+    if admin:
+        print("✅ Admin created successfully!")
+    else:
+        print("❌ Admin creation failed!")
+    
     conn.close()
 
 # ==================== AUTHENTICATION ====================
@@ -286,15 +309,13 @@ def set_page_config():
             color: white;
             margin-bottom: 30px;
         }
-        .notification-badge {
-            background: #ff4444;
-            color: white;
-            border-radius: 50%;
-            padding: 2px 8px;
-            font-size: 12px;
-            position: absolute;
-            top: -8px;
-            right: -8px;
+        .login-container {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 30px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
         }
     </style>
     """, unsafe_allow_html=True)
@@ -302,7 +323,7 @@ def set_page_config():
 def show_sidebar():
     """Render sidebar with navigation"""
     with st.sidebar:
-        st.image("https://via.placeholder.com/150x80/1a73e8/ffffff?text=HyperLocal", use_column_width=True)
+        st.markdown("### 🚗 HyperLocal")
         st.markdown("---")
         
         if 'user' in st.session_state:
@@ -651,9 +672,13 @@ def book_ride():
     
     with col2:
         st.markdown("### 📍 Map")
-        m = folium.Map(location=[12.9716, 77.5946], zoom_start=12)
-        folium.Marker([12.9716, 77.5946], popup="Your Location").add_to(m)
-        st_folium(m, width=400, height=300)
+        try:
+            m = folium.Map(location=[12.9716, 77.5946], zoom_start=12)
+            folium.Marker([12.9716, 77.5946], popup="Your Location").add_to(m)
+            st_folium(m, width=400, height=300)
+        except Exception as e:
+            st.warning("Map is currently unavailable. Please try again later.")
+            st.info("📍 Your Location: 12.9716° N, 77.5946° E")
     
     if st.button("🚗 Book Now", use_container_width=True):
         conn = sqlite3.connect('hyperlocal.db')
@@ -1062,24 +1087,39 @@ def login_page():
     
     with col2:
         with st.container():
+            st.markdown('<div class="login-container">', unsafe_allow_html=True)
             st.markdown("### Welcome Back!")
+            
+            # Display test credentials
+            st.info("📝 **Test Credentials:**\n- Admin: `admin` / `admin123`\n- Customer: `customer` / `customer123`")
+            
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
             user_type = st.selectbox("Login as", ["customer", "driver", "admin"])
             
             if st.button("Login", use_container_width=True):
-                user = authenticate_user(username, password)
-                if user and user[5] == user_type:
-                    st.session_state.user = user
-                    st.success("✅ Login successful!")
-                    time.sleep(0.5)
-                    st.session_state.page = "Dashboard"
-                    st.rerun()
+                if not username or not password:
+                    st.error("❌ Please enter both username and password")
                 else:
-                    st.error("❌ Invalid credentials or user type mismatch")
+                    user = authenticate_user(username, password)
+                    if user:
+                        if user[5] == user_type:
+                            if user[6] == 'approved':
+                                st.session_state.user = user
+                                st.success("✅ Login successful!")
+                                time.sleep(0.5)
+                                st.session_state.page = "Dashboard"
+                                st.rerun()
+                            else:
+                                st.error("❌ Your account is pending approval. Please wait for admin approval.")
+                        else:
+                            st.error("❌ User type mismatch. Please select the correct role.")
+                    else:
+                        st.error("❌ Invalid username or password")
             
             st.markdown("---")
             st.markdown("Don't have an account? [Register Here](#)")
+            st.markdown("</div>", unsafe_allow_html=True)
 
 def register_page():
     """Registration page"""
@@ -1089,6 +1129,7 @@ def register_page():
     
     with col2:
         with st.container():
+            st.markdown('<div class="login-container">', unsafe_allow_html=True)
             st.markdown("### Create New Account")
             full_name = st.text_input("Full Name")
             username = st.text_input("Username")
@@ -1103,12 +1144,15 @@ def register_page():
                     st.error("❌ Passwords do not match")
                 elif not all([full_name, username, phone, email, password]):
                     st.error("❌ Please fill all fields")
+                elif len(password) < 6:
+                    st.error("❌ Password must be at least 6 characters")
                 else:
                     success, result = register_user(username, password, full_name, phone, email, user_type)
                     if success:
                         st.success(f"✅ Registration successful! Welcome {full_name}! {'Please wait for admin approval.' if user_type == 'driver' else 'You can now login.'}")
                     else:
                         st.error(f"❌ {result}")
+            st.markdown("</div>", unsafe_allow_html=True)
 
 # ==================== MAIN APP ====================
 

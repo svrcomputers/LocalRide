@@ -148,36 +148,42 @@ def init_db():
         FOREIGN KEY (reviewee_id) REFERENCES users (id)
     )''')
     
-    # ===== FIX: FORCE CREATE ADMIN WITH PROPER CREDENTIALS =====
+    # ===== FORCE ADMIN AND CUSTOMER CREATION =====
+    conn2 = sqlite3.connect('hyperlocal.db')
+    c2 = conn2.cursor()
+    
+    # Delete existing admin and customer
+    c2.execute("DELETE FROM users WHERE username = 'admin'")
+    c2.execute("DELETE FROM users WHERE username = 'customer'")
+    
+    # Create admin
     admin_pass = hashlib.sha256('admin123'.encode()).hexdigest()
-    
-    # Delete any existing admin
-    c.execute("DELETE FROM users WHERE username = 'admin'")
-    
-    # Create fresh admin
-    c.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
+    c2.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
                  VALUES (?, ?, ?, ?, ?, ?)""",
               ('admin', admin_pass, 'System Admin', '9999999999', 'admin', 'approved'))
     
-    # Also add a test customer for demonstration
-    c.execute("SELECT * FROM users WHERE username = 'customer'")
-    if not c.fetchone():
-        customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
-        c.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
-                     VALUES (?, ?, ?, ?, ?, ?)""",
-                  ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
+    # Create test customer
+    customer_pass = hashlib.sha256('customer123'.encode()).hexdigest()
+    c2.execute("""INSERT INTO users (username, password, full_name, phone, user_type, status) 
+                 VALUES (?, ?, ?, ?, ?, ?)""",
+              ('customer', customer_pass, 'Test Customer', '9876543210', 'customer', 'approved'))
     
-    # Commit all changes
-    conn.commit()
+    # Commit and verify
+    conn2.commit()
     
-    # Verify admin was created
-    c.execute("SELECT * FROM users WHERE username = 'admin'")
-    admin = c.fetchone()
-    if admin:
+    c2.execute("SELECT * FROM users WHERE username = 'admin'")
+    if c2.fetchone():
         print("✅ Admin created successfully!")
     else:
         print("❌ Admin creation failed!")
     
+    c2.execute("SELECT * FROM users WHERE username = 'customer'")
+    if c2.fetchone():
+        print("✅ Customer created successfully!")
+    else:
+        print("❌ Customer creation failed!")
+    
+    conn2.close()
     conn.close()
 
 # ==================== AUTHENTICATION ====================
@@ -316,6 +322,16 @@ def set_page_config():
             background: white;
             border-radius: 15px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        .credentials-box {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            border: 1px solid #e9ecef;
+        }
+        .credentials-box strong {
+            color: #1a73e8;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -1091,11 +1107,17 @@ def login_page():
             st.markdown("### Welcome Back!")
             
             # Display test credentials
-            st.info("📝 **Test Credentials:**\n- Admin: `admin` / `admin123`\n- Customer: `customer` / `customer123`")
+            st.markdown("""
+            <div class='credentials-box'>
+                <strong>📝 Test Credentials:</strong><br>
+                👑 Admin: <code>admin</code> / <code>admin123</code><br>
+                👤 Customer: <code>customer</code> / <code>customer123</code>
+            </div>
+            """, unsafe_allow_html=True)
             
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            user_type = st.selectbox("Login as", ["customer", "driver", "admin"])
+            user_type = st.selectbox("Login as", ["admin", "customer", "driver"])
             
             if st.button("Login", use_container_width=True):
                 if not username or not password:
